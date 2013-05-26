@@ -44,7 +44,8 @@ function d($v) {
 class Deploy {
     var $time_format = 'Y-m-d_H-i-s';
     var $tmp_dir = '/tmp';
-    var $remote_tmp_dir = '/tmp';
+    var $local = array();
+    var $remote = array();
 
     var $configFile;
     var $config;
@@ -59,7 +60,6 @@ class Deploy {
     }
     function parseConfig($file) {
         global $debug,$x_color,$output_color,$bg_color;
-        $this->remote_user = trim(`whoami`);
         if (file_exists($this->configFile)) {
             $config = require_once($this->configFile);
             foreach ($config as $k => $v) {
@@ -81,15 +81,19 @@ class Deploy {
                         break;
                 }
             }
-            $this->sourceDir = realpath($this->configDir .'/'. $this->local_directory);
+            $this->sourceDir = realpath($this->configDir .'/'. $this->local['directory']);
             $this->tmp_dir = $this->tmp_dir ."/deployer_". $this->deploymentTime;
-            mkdir($this->tmp_dir, true);
+            x("mkdir -p ". $this->tmp_dir);
         } else {
             throw new Exception('Config file: '. $this->configFile .' does not exist.');
         }
+        $this->tmp_dir or $this->tmp_dir = '/tmp';
+        isset($this->local['user']) or $this->local['user'] = trim(`whoami`);
+        isset($this->remote['tmp_dir']) or $this->remote['tmp_dir'] = '/tmp';
+        isset($this->remote['user']) or $this->remote['user'] = $this->local['user'];
     }
     function deploy() {
-        d($this);
+        //d($this);
         if ($this->deploy_db) {
             $this->dumpDb();
             $this->compressDb();
@@ -97,6 +101,7 @@ class Deploy {
             $this->restoreDb();
         }
         $this->rsyncTo();
+        $this->runTasks();
         $this->cleanup();
     }
 
@@ -104,13 +109,13 @@ class Deploy {
         return date($this->time_format, $time);
     }
     function dumpDb() {
-        $db = $this->local_db;
+        $db = $this->local['db'];
         if (!$db) {
             return;
         }
         e("Dumping Database...");
-        $user = $this->local_db_user;
-        $pass = $this->local_db_password;
+        $user = $this->local['db_user'];
+        $pass = $this->local['db_password'];
         $tmpDir = $this->tmp_dir;
         $time = $this->getTime($this->deploymentTime);
         $dumpFile = "$tmpDir/$time.sql";
@@ -136,27 +141,48 @@ class Deploy {
             return;
         }
         e("Transferring compressed Database...");
-        $dest = $this->remote_user ."@". $this->remote_host .":". $this->remote_tmp_dir ."/". basename($compressedFile);
+        $dest = $this->remote['user'] ."@". $this->remote['host'] .":". $this->remote['tmp_dir'] ."/". basename($compressedFile);
         $c = "scp $compressedFile $dest";
         x($c);
     }
     function restoreDb() {
         e("Restoring Database...");
+        e("                     (not implemented yet)");
     }
     function rsyncTo() {
         $delete = $this->rsync_delete;
         e("Synching files to remote". ($delete ? " and overwriting" : "") ."...");
-        $srcDir = $this->sourceDir;
-        $destDir = $this->remote_user .'@'. $this->remote_host .':'. $this->remote_directory;
+        $srcDir = $this->sourceDir .'/';
+        $destDir = $this->remote['user'] .'@'. $this->remote['host'] .':'. $this->remote['directory'] .'/';
         $deploymentTime = $this->deploymentTime;
         $exclude = $this->tmp_dir ."/exclude_$deploymentTime.txt";
         $include = $this->tmp_dir ."/include_$deploymentTime.txt";
+        $toKeepTmp = $this->tmp_dir ."/to_keep/";
+
+        e("     backing up to keep files...");
+        foreach ($this->remote['to_keep'] as $toKeep) {
+            x("rsync -apvPu --progress $toKeep $toKeepTmp");
+        }
+        //file_put_contents();
+        e("     syncing from local to remote...");
         $c = "rsync -apvPu ".
                 ($delete ? "--del " : "").
-                "--include-from=$include ".
-                "--exclude-from=$exclude ".
+                //"--include-from=$include ".
+                //"--exclude-from=$exclude ".
                 "$srcDir $destDir";
         x($c);
+
+        e("     redeploying to keep files...");
+        $c = "rsync -apvPu $toKeepTmp $destDir";
+        x($c);
+    }
+    function runTasks() {
+        if (!isset($this->tasks) || !is_array($this->tasks)) {
+            return;
+        }
+        foreach ($this->tasks as $task) {
+            x($task);
+        }
     }
     function cleanup() {
         e("Cleaning up...");
