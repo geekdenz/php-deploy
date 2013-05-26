@@ -94,6 +94,11 @@ class Deploy {
     }
     function deploy() {
         //d($this);
+        $dir = $this->local['directory'];
+        $dirExists = file_exists($dir);
+        if ($dirExists) {
+            x("cd $dir");
+        }
         if ($this->deploy_db) {
             $this->dumpDb();
             $this->compressDb();
@@ -103,6 +108,9 @@ class Deploy {
         $this->rsyncTo();
         $this->runTasks();
         $this->cleanup();
+        if ($dirExists) {
+            x("cd -");
+        }
     }
 
     function getTime($time) {
@@ -160,15 +168,26 @@ class Deploy {
         $toKeepTmp = $this->tmp_dir ."/to_keep/";
 
         e("     backing up to keep files...");
+        x("mkdir -p $toKeepTmp");
         foreach ($this->remote['to_keep'] as $toKeep) {
+            if (!file_exists($toKeep)) {
+                continue;
+            }
             x("rsync -apvPu --progress $toKeep $toKeepTmp");
         }
-        //file_put_contents();
+        $excludeStr = "";
+        $localExclude = isset($this->local['exclude']) ? $this->local['exclude'] : false;
+        if ($localExclude) {
+            foreach ($localExclude as $ex) {
+                $excludeStr .= "$ex\n";
+            }
+        }
+        file_put_contents($exclude, $excludeStr);
         e("     syncing from local to remote...");
         $c = "rsync -apvPu ".
                 ($delete ? "--del " : "").
                 //"--include-from=$include ".
-                //"--exclude-from=$exclude ".
+                "--exclude-from=$exclude ".
                 "$srcDir $destDir";
         x($c);
 
